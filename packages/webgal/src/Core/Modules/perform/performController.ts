@@ -29,18 +29,20 @@ export class PerformController {
     }
 
     // 时间到后自动清理演出
-    perform.stopTimeout = setTimeout(() => {
-      // perform.stopFunction();
-      // perform.isOver = true;
-      if (!perform.isHoldOn) {
-        // 如果不是保持演出，清除
-        this.unmountPerform(perform.performName);
-        if (perform.goNextWhenOver) {
-          // nextSentence();
-          this.goNextWhenOver();
+    if (perform.duration >= 0) {
+      perform.stopTimeout = setTimeout(() => {
+        // perform.stopFunction();
+        // perform.isOver = true;
+        if (!perform.isHoldOn) {
+          // 如果不是保持演出，清除
+          this.unmountPerform(perform.performName);
+          if (perform.goNextWhenOver) {
+            // nextSentence();
+            this.goNextWhenOver();
+          }
         }
-      }
-    }, perform.duration);
+      }, perform.duration);
+    }
 
     this.performList.push(perform);
   }
@@ -87,6 +89,9 @@ export class PerformController {
     }
   }
 
+  /**
+   * 目前仅Timeout导致的结束时会调用，非Timeout导致的unmountPerform则不会调。
+   */
   private goNextWhenOver() {
     let isBlockingAuto = false;
     this.performList.forEach((e) => {
@@ -95,7 +100,7 @@ export class PerformController {
         isBlockingAuto = true;
     });
     if (isBlockingAuto) {
-      // 有阻塞，提前结束
+      // 有阻塞，待100ms后再次检查
       setTimeout(this.goNextWhenOver, 100);
     } else {
       nextSentence();

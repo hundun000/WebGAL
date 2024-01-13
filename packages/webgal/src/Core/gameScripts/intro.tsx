@@ -7,6 +7,12 @@ import { nextSentence } from '@/Core/controller/gamePlay/nextSentence';
 import { PerformController } from '@/Core/Modules/perform/performController';
 import { logger } from '@/Core/util/logger';
 import { WebGAL } from '@/Core/WebGAL';
+
+/**
+ * 相对于最后一个元素出现，Perform额外增加的时长
+ */
+const PERFORM_EXTRA_DURATION = 1000;
+
 /**
  * 显示一小段黑屏演示
  * @param sentence
@@ -16,6 +22,13 @@ export const intro = (sentence: ISentence): IPerform => {
    * intro 内部控制
    */
 
+  // TODO
+  let doneByNextEvent = false;
+  sentence.args.forEach((e) => {
+    if (e.key === 'doneByNextEvent') {
+      doneByNextEvent = true;
+    }
+  });
   const performName = `introPerform${Math.random().toString()}`;
   let fontSize: string | undefined;
   let backgroundColor: any = 'rgba(0, 0, 0, 1)';
@@ -75,9 +88,31 @@ export const intro = (sentence: ISentence): IPerform => {
     width: '100%',
     height: '100%',
   };
-
-  let timeout = setTimeout(() => {});
+  let currentBlockingNext = true;
+  let customTimeoutHandlerCallNextSentence = false;
+  /*
+    不论是首次创建的Timeout、加速后新建的Timeout，均对应“当所有node展示完成”，然后使用该timeoutBackendLogic；
+    内容为：
+    （1）若doneByNextEvent，则取消自身blockingNext（并不需要卸载自身）；使得下一次（用户触发的）nextSentence()内部逻辑即可满足需求；
+    （2）否则，主动卸载自身。并视情况可选地额外调用nextSentence。
+    */
+  let timeoutBackendLogic = () => {
+    if (doneByNextEvent) {
+      currentBlockingNext = false;
+    } else {
+      WebGAL.gameplay.performController.unmountPerform(performName);
+      if (customTimeoutHandlerCallNextSentence) {
+        setTimeout(nextSentence, 0);
+      }
+    }
+  };
+  let customTimeout = setTimeout(() => {});
   const toNextIntroElement = () => {
+    /*
+    Next事件导致：
+    （1）每个动画提早1个步长；
+    （2）timeoutBackendLogic立刻执行，或timeoutBackendLogic的发生提早1个步长; 实现方式是重建一个Timeout任务
+    */
     const introContainer = document.getElementById('introContainer');
     if (introContainer) {
       const children = introContainer.childNodes[0].childNodes[0].childNodes as any;
@@ -85,20 +120,16 @@ export const intro = (sentence: ISentence): IPerform => {
       children.forEach((node: HTMLDivElement, index: number) => {
         const currentDelay = Number(node.style.animationDelay.split('ms')[0]);
         if (currentDelay > 0) {
-          node.style.animationDelay = `${currentDelay - 1500}ms`;
+          node.style.animationDelay = `${currentDelay - delayTime}ms`;
         }
         if (index === len - 1) {
           if (currentDelay === 0) {
-            clearTimeout(timeout);
-            WebGAL.gameplay.performController.unmountPerform(performName);
-            // 卸载函数发生在 nextSentence 生效前，所以不需要做下一行的操作。
-            // setTimeout(nextSentence, 0);
+            clearTimeout(customTimeout);
+            timeoutBackendLogic()
           } else {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => {
-              WebGAL.gameplay.performController.unmountPerform(performName);
-              setTimeout(nextSentence, 0);
-            }, currentDelay - 500);
+            clearTimeout(customTimeout);
+            customTimeoutHandlerCallNextSentence = true;
+            customTimeout = setTimeout(timeoutBackendLogic, currentDelay + PERFORM_EXTRA_DURATION);
           }
         }
       });
@@ -132,9 +163,17 @@ export const intro = (sentence: ISentence): IPerform => {
   if (introContainer) {
     introContainer.style.display = 'block';
   }
+  let duration;
+  if (doneByNextEvent) {
+    // 跳过PerformController建立的（首次）timeout任务，自定义之
+    duration = -1;
+    customTimeout = setTimeout(timeoutBackendLogic, PERFORM_EXTRA_DURATION + delayTime * introArray.length);
+  } else {
+    duration = PERFORM_EXTRA_DURATION + delayTime * introArray.length;
+  }
   return {
     performName,
-    duration: 1000 + delayTime * introArray.length,
+    duration: duration,
     isHoldOn: false,
     stopFunction: () => {
       const introContainer = document.getElementById('introContainer');
@@ -143,7 +182,7 @@ export const intro = (sentence: ISentence): IPerform => {
       }
       WebGAL.eventBus.off('__NEXT', toNextIntroElement);
     },
-    blockingNext: () => true,
+    blockingNext: () => currentBlockingNext,
     blockingAuto: () => true,
     stopTimeout: undefined, // 暂时不用，后面会交给自动清除
     goNextWhenOver: true,
